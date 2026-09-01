@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"sync/atomic"
 )
 
@@ -17,12 +19,14 @@ type chirp struct {
 }
 
 type chirpResponse struct {
-	Valid bool `json:"valid"`
+	CleanedBody string `json:"cleaned_body"`
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
+
+var filteringWords = []string{"kerfuffle", "sharbert", "fornax"}
 
 func writeError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -81,9 +85,17 @@ func main() {
 			writeError(w, fmt.Errorf("chirp is too long"))
 			return
 		}
+		cleanedBody := req.Body
+		regex := fmt.Sprintf(`(%s)`, strings.Join(filteringWords, "|"))
+		cleanedBody = regexp.MustCompile("(?i)"+regex).ReplaceAllStringFunc(
+			cleanedBody,
+			func(s string) string {
+				return "****"
+			},
+		)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(chirpResponse{Valid: true})
+		err = json.NewEncoder(w).Encode(chirpResponse{CleanedBody: cleanedBody})
 		if err != nil {
 			writeError(w, err)
 		}
