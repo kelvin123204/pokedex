@@ -1,10 +1,14 @@
 package main
 
+import _ "github.com/lib/pq"
+
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"regexp"
 	"strings"
 	"sync/atomic"
@@ -45,6 +49,14 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func main() {
+
+	dbURL := os.Getenv("DB_URL")
+	_, err := sql.Open("postgres", dbURL)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	mux := http.NewServeMux()
 	cfg := apiConfig{
 		fileserverHits: atomic.Int32{},
