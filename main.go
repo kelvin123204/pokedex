@@ -50,23 +50,27 @@ type chirpCreateResponse struct {
 	UserId    string `json:"user_id"`
 }
 
-type chirpResponse struct {
-	CleanedBody string `json:"cleaned_body"`
-}
-
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
 var filteringWords = []string{"kerfuffle", "sharbert", "fornax"}
 
-func writeError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusBadRequest)
-	e := json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+// using interface{} to make it accept any type of data
+func writeJson(w http.ResponseWriter, responseStatus int, data interface{}) {
+	bytes, e := json.Marshal(data)
 	if e != nil {
-		log.Fatal(e)
+		writeError(w, http.StatusInternalServerError, errors.New("failed to write json"))
 	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(responseStatus)
+	_, _ = w.Write(bytes)
+}
+
+func writeError(w http.ResponseWriter, responseStatus int, err error) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(responseStatus)
+	_ = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
 }
 
 func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
@@ -77,7 +81,11 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func main() {
-	godotenv.Load()
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal(err)
+		return
+	}
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
@@ -95,30 +103,24 @@ func main() {
 	mux.Handle("GET /api/healthz", cfg.middlewareMetricsInc(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("OK"))
-		if err != nil {
-			log.Fatal(err)
-		}
+		_, _ = w.Write([]byte("OK"))
 	})))
 
 	mux.HandleFunc("GET /admin/metrics", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte(fmt.Sprintf("<html>\n<body>\n<h1>Welcome, Chirpy Admin</h1>\n<p>Chirpy has been visited %d times!</p>\n</body>\n</html>", cfg.fileserverHits.Load())))
-		if err != nil {
-			log.Fatal(err)
-		}
+		_, _ = w.Write([]byte(fmt.Sprintf("<html>\n<body>\n<h1>Welcome, Chirpy Admin</h1>\n<p>Chirpy has been visited %d times!</p>\n</body>\n</html>", cfg.fileserverHits.Load())))
 	})
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
 		platform := os.Getenv("PLATFORM")
 		if platform != "dev" {
-			w.WriteHeader(http.StatusForbidden)
+			writeError(w, http.StatusInternalServerError, errors.New("only dev can reset the database"))
 			return
 		}
 		err := queries.DeleteUsers(r.Context())
 		if err != nil {
-			writeError(w, err)
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		cfg.fileserverHits.Store(0)
@@ -129,49 +131,33 @@ func main() {
 		var req createUserRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusInternalServerError)
 			err = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
-			if err != nil {
-				log.Fatal(err)
-			}
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 		user, err := queries.CreateUser(r.Context(), req.Email)
 		if err != nil {
-			writeError(w, err)
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusCreated)
 		resp := createUserResponse{
 			Id:        user.ID.String(),
 			CreatedAt: user.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 			Email:     user.Email,
 		}
-		err = json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		writeJson(w, http.StatusCreated, resp)
 	})
 
 	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		var req chirpCreateRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
 		if err != nil {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusInternalServerError)
-			err = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
-			if err != nil {
-				log.Fatal(err)
-			}
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-
 		if len(req.Body) > 140 {
-			writeError(w, fmt.Errorf("chirp is too long"))
+			writeError(w, http.StatusBadRequest, fmt.Errorf("chirp is too long"))
 			return
 		}
 		cleanedBody := req.Body
@@ -189,34 +175,25 @@ func main() {
 		})
 
 		if err != nil {
-			writeError(w, err)
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusCreated)
-		resp := chirpCreateResponse{
+		writeJson(w, http.StatusCreated, chirpCreateResponse{
 			Id:        chirp.ID.String(),
 			CreatedAt: chirp.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: chirp.UpdatedAt.Format(time.RFC3339),
 			Body:      chirp.Body,
 			UserId:    chirp.UserID.String(),
-		}
-		err = json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		})
 	})
 
 	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
 		chirps, err := queries.GetChirps(r.Context())
 		if err != nil {
-			writeError(w, err)
+			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
 		var resp []chirpCreateResponse
 		for _, chirp := range chirps {
 			resp = append(resp, chirpCreateResponse{
@@ -227,11 +204,7 @@ func main() {
 				UserId:    chirp.UserID.String(),
 			})
 		}
-		err = json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		writeJson(w, http.StatusOK, resp)
 	})
 
 	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
@@ -240,29 +213,20 @@ func main() {
 		chirp, err := queries.GetChirpById(r.Context(), uuid.MustParse(chirpID))
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
-				w.WriteHeader(http.StatusNotFound)
-				return
+				writeError(w, http.StatusNotFound, err)
+			} else {
+				writeError(w, http.StatusInternalServerError, err)
 			}
-			writeError(w, err)
 			return
-
 		}
-
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		resp := chirpCreateResponse{
+		writeJson(w, http.StatusOK, chirpCreateResponse{
 			Id:        chirp.ID.String(),
 			CreatedAt: chirp.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: chirp.UpdatedAt.Format(time.RFC3339),
 			Body:      chirp.Body,
 			UserId:    chirp.UserID.String(),
-		}
-		err = json.NewEncoder(w).Encode(resp)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
+		})
 	})
 
-	http.ListenAndServe(":8080", mux)
+	_ = http.ListenAndServe(":8080", mux)
 }
