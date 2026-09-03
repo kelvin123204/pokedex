@@ -1,6 +1,12 @@
 package main
 
-import _ "github.com/lib/pq"
+import (
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/kelvin123204/pokedex/internal/database"
+	_ "github.com/lib/pq"
+)
 
 import (
 	"database/sql"
@@ -16,6 +22,17 @@ import (
 
 type apiConfig struct {
 	fileserverHits atomic.Int32
+}
+
+type createUserRequest struct {
+	Email string
+}
+
+type createUserResponse struct {
+	Id        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Email     string `json:"email"`
 }
 
 type chirp struct {
@@ -49,13 +66,14 @@ func (cfg *apiConfig) middlewareMetricsInc(next http.Handler) http.Handler {
 }
 
 func main() {
-
+	godotenv.Load()
 	dbURL := os.Getenv("DB_URL")
-	_, err := sql.Open("postgres", dbURL)
-
+	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		log.Fatal(err)
+		return
 	}
+	queries := database.New(db)
 
 	mux := http.NewServeMux()
 	cfg := apiConfig{
@@ -82,6 +100,16 @@ func main() {
 	})
 
 	mux.HandleFunc("POST /admin/reset", func(w http.ResponseWriter, r *http.Request) {
+		platform := os.Getenv("PLATFORM")
+		if platform != "dev" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		err := queries.DeleteUsers(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 		cfg.fileserverHits.Store(0)
 		w.WriteHeader(http.StatusOK)
 	})
@@ -110,6 +138,38 @@ func main() {
 		err = json.NewEncoder(w).Encode(chirpResponse{CleanedBody: cleanedBody})
 		if err != nil {
 			writeError(w, err)
+		}
+	})
+
+	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
+		var req createUserRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			err = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+		user, err := queries.CreateUser(r.Context(), req.Email)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusCreated)
+		resp := createUserResponse{
+			Id:        user.ID.String(),
+			CreatedAt: user.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
+			Email:     user.Email,
+		}
+		err = json.NewEncoder(w).Encode(resp)
+		if err != nil {
+			writeError(w, err)
+			return
 		}
 	})
 
