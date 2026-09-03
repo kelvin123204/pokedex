@@ -208,5 +208,30 @@ func main() {
 		}
 	})
 
+	mux.HandleFunc("GET /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		chirps, err := queries.GetChirps(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		var resp []chirpCreateResponse
+		for _, chirp := range chirps {
+			resp = append(resp, chirpCreateResponse{
+				Id:        chirp.ID.String(),
+				CreatedAt: chirp.CreatedAt.Format(time.RFC3339),
+				UpdatedAt: chirp.UpdatedAt.Format(time.RFC3339),
+				Body:      chirp.Body,
+				UserId:    chirp.UserID.String(),
+			})
+		}
+		err = json.NewEncoder(w).Encode(resp)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	})
+
 	http.ListenAndServe(":8080", mux)
 }
