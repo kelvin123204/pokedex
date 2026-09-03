@@ -3,6 +3,7 @@ package main
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/joho/godotenv"
 	"github.com/kelvin123204/pokedex/internal/database"
 	_ "github.com/lib/pq"
@@ -35,8 +36,17 @@ type createUserResponse struct {
 	Email     string `json:"email"`
 }
 
-type chirp struct {
-	Body string `json:"body"`
+type chirpCreateRequest struct {
+	Body   string `json:"body"`
+	UserId string `json:"user_id"`
+}
+
+type chirpCreateResponse struct {
+	Id        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Body      string `json:"body"`
+	UserId    string `json:"user_id"`
 }
 
 type chirpResponse struct {
@@ -114,33 +124,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	mux.HandleFunc("POST /api/validate_chirp", func(w http.ResponseWriter, r *http.Request) {
-		var req chirp
-		err := json.NewDecoder(r.Body).Decode(&req)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		if len(req.Body) > 140 {
-			writeError(w, fmt.Errorf("chirp is too long"))
-			return
-		}
-		cleanedBody := req.Body
-		regex := fmt.Sprintf(`(%s)`, strings.Join(filteringWords, "|"))
-		cleanedBody = regexp.MustCompile("(?i)"+regex).ReplaceAllStringFunc(
-			cleanedBody,
-			func(s string) string {
-				return "****"
-			},
-		)
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		err = json.NewEncoder(w).Encode(chirpResponse{CleanedBody: cleanedBody})
-		if err != nil {
-			writeError(w, err)
-		}
-	})
-
 	mux.HandleFunc("POST /api/users", func(w http.ResponseWriter, r *http.Request) {
 		var req createUserRequest
 		err := json.NewDecoder(r.Body).Decode(&req)
@@ -165,6 +148,58 @@ func main() {
 			CreatedAt: user.CreatedAt.Format(time.RFC3339),
 			UpdatedAt: user.UpdatedAt.Format(time.RFC3339),
 			Email:     user.Email,
+		}
+		err = json.NewEncoder(w).Encode(resp)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	})
+
+	mux.HandleFunc("POST /api/chirps", func(w http.ResponseWriter, r *http.Request) {
+		var req chirpCreateRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.WriteHeader(http.StatusInternalServerError)
+			err = json.NewEncoder(w).Encode(errorResponse{Error: err.Error()})
+			if err != nil {
+				log.Fatal(err)
+			}
+			return
+		}
+
+		if len(req.Body) > 140 {
+			writeError(w, fmt.Errorf("chirp is too long"))
+			return
+		}
+		cleanedBody := req.Body
+		regex := fmt.Sprintf(`(%s)`, strings.Join(filteringWords, "|"))
+		cleanedBody = regexp.MustCompile("(?i)"+regex).ReplaceAllStringFunc(
+			cleanedBody,
+			func(s string) string {
+				return "****"
+			},
+		)
+
+		chirp, err := queries.CreateChirps(r.Context(), database.CreateChirpsParams{
+			Body:   cleanedBody,
+			UserID: uuid.MustParse(req.UserId),
+		})
+
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusCreated)
+		resp := chirpCreateResponse{
+			Id:        chirp.ID.String(),
+			CreatedAt: chirp.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: chirp.UpdatedAt.Format(time.RFC3339),
+			Body:      chirp.Body,
+			UserId:    chirp.UserID.String(),
 		}
 		err = json.NewEncoder(w).Encode(resp)
 		if err != nil {
