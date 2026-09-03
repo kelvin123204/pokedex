@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -225,6 +226,36 @@ func main() {
 				Body:      chirp.Body,
 				UserId:    chirp.UserID.String(),
 			})
+		}
+		err = json.NewEncoder(w).Encode(resp)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	})
+
+	mux.HandleFunc("GET /api/chirps/{chirpID}", func(w http.ResponseWriter, r *http.Request) {
+		chirpID := r.PathValue("chirpID")
+
+		chirp, err := queries.GetChirpById(r.Context(), uuid.MustParse(chirpID))
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			writeError(w, err)
+			return
+
+		}
+
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		resp := chirpCreateResponse{
+			Id:        chirp.ID.String(),
+			CreatedAt: chirp.CreatedAt.Format(time.RFC3339),
+			UpdatedAt: chirp.UpdatedAt.Format(time.RFC3339),
+			Body:      chirp.Body,
+			UserId:    chirp.UserID.String(),
 		}
 		err = json.NewEncoder(w).Encode(resp)
 		if err != nil {
