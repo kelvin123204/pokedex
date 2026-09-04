@@ -6,6 +6,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
+	"github.com/kelvin123204/pokedex/internal/auth"
 	"github.com/kelvin123204/pokedex/internal/database"
 	_ "github.com/lib/pq"
 )
@@ -27,7 +28,8 @@ type apiConfig struct {
 }
 
 type createUserRequest struct {
-	Email string
+	Email    string
+	Password string
 }
 
 type createUserResponse struct {
@@ -48,6 +50,18 @@ type chirpCreateResponse struct {
 	UpdatedAt string `json:"updated_at"`
 	Body      string `json:"body"`
 	UserId    string `json:"user_id"`
+}
+
+type loginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type loginResponse struct {
+	Id        string `json:"id"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
+	Email     string `json:"email"`
 }
 
 type errorResponse struct {
@@ -135,7 +149,16 @@ func main() {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		user, err := queries.CreateUser(r.Context(), req.Email)
+		hp, err := auth.HashPassword(req.Password)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		user, err := queries.CreateUser(r.Context(),
+			database.CreateUserParams{
+				Email:          req.Email,
+				HashedPassword: hp,
+			})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
@@ -226,6 +249,39 @@ func main() {
 			Body:      chirp.Body,
 			UserId:    chirp.UserID.String(),
 		})
+	})
+
+	mux.HandleFunc("POST /api/login", func(w http.ResponseWriter, r *http.Request) {
+		var req loginRequest
+		err := json.NewDecoder(r.Body).Decode(&req)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		u, err := queries.GetUserByEmail(r.Context(), req.Email)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeError(w, http.StatusUnauthorized, errors.New("incorrect email or password"))
+			} else {
+				writeError(w, http.StatusInternalServerError, err)
+			}
+			return
+		}
+		b, err := auth.CheckPasswordHash(req.Password, u.HashedPassword)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		if !b {
+			writeError(w, http.StatusUnauthorized, errors.New("incorrect email or password"))
+		} else {
+			writeJson(w, http.StatusOK, loginResponse{
+				Id:        u.ID.String(),
+				CreatedAt: u.CreatedAt.Format(time.RFC3339),
+				UpdatedAt: u.UpdatedAt.Format(time.RFC3339),
+				Email:     u.Email,
+			})
+		}
 	})
 
 	_ = http.ListenAndServe(":8080", mux)
