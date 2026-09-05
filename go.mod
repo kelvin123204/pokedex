@@ -1,4 +1,4 @@
-module github.com/kelvin123204/pokedex
+module github.com/kelvin123204/http-server
 
 go 1.26.5
 

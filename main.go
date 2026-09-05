@@ -6,8 +6,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/joho/godotenv"
-	"github.com/kelvin123204/pokedex/internal/auth"
-	"github.com/kelvin123204/pokedex/internal/database"
+	"github.com/kelvin123204/http-server/internal/auth"
+	"github.com/kelvin123204/http-server/internal/database"
 	_ "github.com/lib/pq"
 )
 
